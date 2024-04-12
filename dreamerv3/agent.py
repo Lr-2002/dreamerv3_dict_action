@@ -17,8 +17,7 @@ from . import jaxagent
 from . import jaxutils
 from . import nets
 from . import ninjax as nj
-
-
+ACTION_LIST = []
 @jaxagent.Wrapper
 class Agent(nj.Module):
 
@@ -32,6 +31,8 @@ class Agent(nj.Module):
       self.act_space = act_space['action']
     except KeyError:
       self.act_space = act_space
+    global ACTION_LIST
+    ACTION_LIST = list(self.act_space.keys())
     self.step = step
     self.wm = WorldModel(obs_space, act_space, config, name='wm')
     self.task_behavior = getattr(behaviors, config.task_behavior)(
@@ -165,12 +166,19 @@ class WorldModel(nj.Module):
 
   def train(self, data, state):
     modules = [self.encoder, self.rssm, *self.heads.values()]
+
     if 'action' not in data:
-      assert "Continous" in data and "Discrete" in data, \
-        "Action should be a Dict with keys 'Continous' and 'Discrete', otherwise use a single action space"
-      data['action'] = {"Continous": data['Continous'], "Discrete": data['Discrete']}
-      data.pop('Continous')
-      data.pop('Discrete')
+      global ACTION_LIST
+      if ACTION_LIST is not []:
+        data['action'] = {k:data[k] for k in ACTION_LIST}
+        for key in ACTION_LIST:
+          data.pop(key)
+
+      # assert "Continous" in data and "Discrete" in data, \
+      #   "Action should be a Dict with keys 'Continous' and 'Discrete', otherwise use a single action space"
+      # data['action'] = {"Continous": data['Continous'], "Discrete": data['Discrete']}
+      # data.pop('Continous')
+      # data.pop('Discrete')
     mets, (state, outs, metrics) = self.opt(
         modules, self.loss, data, state, has_aux=True)
     metrics.update(mets)
@@ -181,15 +189,20 @@ class WorldModel(nj.Module):
     prev_latent, prev_action = state
     # Shape state: (prev_latent, prev_action), action can be a Dict if hybrid (Discrete + Continous)
     if 'action' not in data:
-      if len(data['Continous'].shape) == 2:
-        data['Continous'] = data['Continous'][..., None]
-      if len(data['Discrete'].shape) == 2:
-        data['Discrete'] = data['Discrete'][..., None]
-      
-      data['action'] = {"Continous": data['Continous'], "Discrete": data['Discrete']}
-      data.pop('Continous')
-      data.pop('Discrete')
-    
+      global  ACTION_LIST
+      if ACTION_LIST is not []:
+        for key in ACTION_LIST:
+          data[key] = data[key][..., None]
+          data.pop(key)
+      # if len(data['Continous'].shape) == 2:
+      #   data['Continous'] = data['Continous'][..., None]
+      # if len(data['Discrete'].shape) == 2:
+      #   data['Discrete'] = data['Discrete'][..., None]
+      #
+      # data['action'] = {"Continous": data['Continous'], "Discrete": data['Discrete']}
+      # data.pop('Continous')
+      # data.pop('Discrete')
+      #
     if isinstance(data['action'], dict):
       prev_actions = {
         k: jnp.concatenate([prev_action[k][:, None], 
@@ -236,13 +249,19 @@ class WorldModel(nj.Module):
       return {**state, 'action': policy(state)}
     traj = jaxutils.scan(
         step, jnp.arange(horizon), start, self.config.imag_unroll)
-    # traj = 
-    if "Continous" in start["action"]:
+    # traj =
+
+    global ACTION_LIST
+    if  ACTION_LIST is not []:
       traj_ = {
           k: jnp.concatenate([start[k][None], v], 0) for k, v in traj.items() if k != "action"}
-      Continous = jnp.concatenate([start["action"]["Continous"][None], traj["action"]["Continous"]], 0)
-      Discrete = jnp.concatenate([start["action"]["Discrete"][None], traj["action"]["Discrete"]], 0)
-      traj_["action"] = {"Continous": Continous, "Discrete": Discrete}
+      # Continous = jnp.concatenate([start["action"]["Continous"][None], traj["action"]["Continous"]], 0)
+      # Discrete = jnp.concatenate([start["action"]["Discrete"][None], traj["action"]["Discrete"]], 0)
+      # traj_["action"] = {"Continous": Continous, "Discrete": Discrete}
+      # action_dict = {}
+      transfer_action = lambda key: jnp.concatenate([[start['action'][key][None], traj['action'][key]], 0])
+      action_dict = {k:transfer_action(k)  for k in  ACTION_LIST}
+      traj_['action'] = action_dict
       traj = traj_
     else:
       traj = {k: jnp.concatenate([start[k][None], v], 0) for k, v in traj.items()}
@@ -310,7 +329,7 @@ class ImagActorCritic(nj.Module):
     self.act_space = act_space
     self.config = config
     if type(self.act_space) == dict:
-      shape = {k: v.shape for k, v in act_space.items() if k != 'reset'} 
+      shape = {k: v.shape for k, v in act_space.items() }
       Discrete = False
       self.grad_disc = config.actor_grad_disc
       self.grad_cont = config.actor_grad_cont
@@ -446,10 +465,13 @@ class VFunction(nj.Module):
   def loss(self, traj, target):
     metrics = {}
     if type(traj['action']) == dict:
-      action_continuous = traj['action']["Continous"]
-      action_discrete = traj['action']["Discrete"]
+      # action_continuous = traj['action']["Continous"]
+      # action_discrete = traj['action']["Discrete"]
       traj = {k: v[:-1] for k, v in traj.items() if k != 'action'}
-      traj["action"] = {"Continous": action_continuous, "Discrete": action_discrete}
+      # traj["action"] = {"Continous": action_continuous, "Discrete": action_discrete}
+      global  ACTION_LIST
+      action_dict = {traj[k] for k in ACTION_LIST}
+      traj['action'] = action_dict
     else:
       traj = {k: v[:-1] for k, v in traj.items()}
     dist = self.net(traj)
@@ -472,9 +494,10 @@ class VFunction(nj.Module):
   def score(self, traj, actor=None):
     rew = self.rewfn(traj)
     if type(traj['action']) == dict:
-      action_continuous = traj['action']["Continous"]
-      action_discrete = traj['action']["Discrete"]
-      assert len(rew) == len(traj['action']["Continous"]) - 1, (
+      # action_continuous = traj['action']["Continous"]
+      # action_discrete = traj['action']["Discrete"]
+      action_city = traj['action']["city_id"]
+      assert len(rew) == len(traj['action']["city_id"]) - 1, (
           'should provide rewards for all but last action')
     else:
       assert len(rew) == len(traj['action']) - 1, (

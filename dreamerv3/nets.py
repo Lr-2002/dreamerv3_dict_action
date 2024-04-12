@@ -275,7 +275,7 @@ class MultiEncoder(nj.Module):
       inputs = [
           data[k][..., None] if len(self.shapes[k]) == 0 else data[k]
           for k in self.mlp_shapes]
-      inputs = jnp.concatenate([x.astype(f32) for x in inputs], -1)
+      inputs = jnp.concatenate([x.astype(f32) for x in inputs], -1)  # could not reshape the tensor
       inputs = jaxutils.cast_to_compute(inputs)
       outputs.append(self._mlp(inputs))
     outputs = jnp.concatenate(outputs, -1)
