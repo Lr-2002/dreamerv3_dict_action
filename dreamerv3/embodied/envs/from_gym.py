@@ -90,6 +90,7 @@ class FromGym(embodied.Env):
 
   def _flatten(self, nest, prefix=None):
     result = {}
+    print(nest)
     for key, value in nest.items():
       key = prefix + '/' + key if prefix else key
       if isinstance(value, gym.spaces.Dict):
