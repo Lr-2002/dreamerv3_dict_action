@@ -33,6 +33,7 @@ class Agent(nj.Module):
       self.act_space = act_space
     global ACTION_LIST
     ACTION_LIST = list(self.act_space.keys())
+    ACTION_LIST.remove('reset')
     self.step = step
     self.wm = WorldModel(obs_space, act_space, config, name='wm')
     self.task_behavior = getattr(behaviors, config.task_behavior)(
@@ -259,7 +260,7 @@ class WorldModel(nj.Module):
       # Discrete = jnp.concatenate([start["action"]["Discrete"][None], traj["action"]["Discrete"]], 0)
       # traj_["action"] = {"Continous": Continous, "Discrete": Discrete}
       # action_dict = {}
-      transfer_action = lambda key: jnp.concatenate([[start['action'][key][None], traj['action'][key]], 0])
+      transfer_action = lambda key: jnp.concatenate([start['action'][key][None], traj['action'][key]], 0)
       action_dict = {k:transfer_action(k)  for k in  ACTION_LIST}
       traj_['action'] = action_dict
       traj = traj_
@@ -329,7 +330,7 @@ class ImagActorCritic(nj.Module):
     self.act_space = act_space
     self.config = config
     if type(self.act_space) == dict:
-      shape = {k: v.shape for k, v in act_space.items() }
+      shape = {k: v.shape for k, v in act_space.items() if k != 'reset'}
       Discrete = False
       self.grad_disc = config.actor_grad_disc
       self.grad_cont = config.actor_grad_cont
@@ -389,7 +390,7 @@ class ImagActorCritic(nj.Module):
     policy = self.actor(sg(traj))
     if type(self.act_space) == dict:
       logpi = {k: w.log_prob(sg(traj['action'][k]))[:-1] for k, w in policy.items()}
-      logpi = logpi["Discrete"] if self.grad_cont != "reinforce" else sum(logpi.values())
+      logpi = logpi["city_id"] if self.grad_cont != "reinforce" else sum(logpi.values())
     else:
       logpi = policy.log_prob(sg(traj['action']))[:-1]
     loss = {'backprop': -adv, 'reinforce': -logpi * sg(adv)}
@@ -467,10 +468,11 @@ class VFunction(nj.Module):
     if type(traj['action']) == dict:
       # action_continuous = traj['action']["Continous"]
       # action_discrete = traj['action']["Discrete"]
+      global  ACTION_LIST
+      action_dict = {traj['action'][k] for k in ACTION_LIST}
       traj = {k: v[:-1] for k, v in traj.items() if k != 'action'}
       # traj["action"] = {"Continous": action_continuous, "Discrete": action_discrete}
-      global  ACTION_LIST
-      action_dict = {traj[k] for k in ACTION_LIST}
+
       traj['action'] = action_dict
     else:
       traj = {k: v[:-1] for k, v in traj.items()}
